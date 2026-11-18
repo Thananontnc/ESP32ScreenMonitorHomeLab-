@@ -16,6 +16,12 @@
 #include "secrets.h"
 #include "sprites.h"
 
+// Adds fake servers named "demo-1", "demo-2"... after the real ones, to preview the
+// Server tab with many machines. Set to 0 for normal use.
+#ifndef DEMO_SERVERS
+#define DEMO_SERVERS 5
+#endif
+
 // ---------- hardware
 #define TOUCH_CS 33
 #define TOUCH_IRQ 36
@@ -38,7 +44,9 @@ const uint16_t TOPBG = C565(24, 30, 45), NAVBG = C565(10, 12, 18), NAV_ACT = C56
 const uint16_t FG = C565(234, 238, 246), DIM = C565(132, 142, 162), FAINT = C565(84, 94, 116);
 const uint16_t C_OK = C565(76, 211, 135), C_WARN = C565(255, 181, 71), C_BAD = C565(255, 93, 108), ACC = C565(90, 140, 255);
 const uint16_t OK_BG = C565(22, 54, 42), BAD_BG = C565(62, 26, 34), WARN_BG = C565(60, 46, 22);
-const uint16_t RING_IN = C565(20, 28, 48);
+const uint16_t RING_IN = C565(20, 28, 48), DOTS = C565(28, 33, 46), OFFLINE_CARD = C565(30, 24, 32);
+const uint16_t DAWN_TOP = C565(84, 86, 168), DAWN_BOT = C565(255, 172, 122), DUSK_TOP = C565(66, 56, 138), DUSK_BOT = C565(255, 132, 98);
+const uint16_t SUN_LOW = C565(255, 150, 70), FIREFLY = C565(214, 255, 120), PETAL = C565(255, 150, 190), PETAL2 = C565(255, 255, 255), BIRD = C565(40, 50, 80);
 
 // sky scene behind Pringle
 const uint16_t DAY_TOP = C565(70, 132, 226), DAY_BOT = C565(168, 208, 246), SUN = C565(255, 212, 84), CLOUD = C565(244, 247, 252);
@@ -64,11 +72,12 @@ const Icon IC_GLOBE = {"..XXXX..", ".X.X..X.", "XXXXXXXX", "X..X...X", "X..X...X
 
 // ---------- data from the homelab
 enum Reason { R_NONE, R_WIFI, R_SERVER, R_PASSWORD, R_BUSY_LIMIT, R_BAD_JSON };
-struct Dev { char name[22]; bool online; float cpu, mem, temp; };
+const int MAX_DEV = 12;
+struct Dev { char name[22]; bool online; float cpu, mem, temp; int nProb; char prob[44]; };
 struct Snap {
   bool valid = false; Reason reason = R_WIFI; int code = 0;
   int nProb = 0; char prob[4][44];
-  int nDev = 0; Dev dev[3];
+  int nDev = 0; Dev dev[MAX_DEV];
   bool netOn = false; int ms = -1;
   bool hasAds = false, adsOn = false; long blocked = 0, queries = 0;
   bool hasPower = false; int watts = 0;
@@ -92,6 +101,20 @@ int clockMinute = -1;
 bool dataShown = false;
 int nProbShown = 0;
 
+// Server tab: a 2x2 grid of servers per page; tap one to open its detail view.
+const int PER_PAGE = 4;
+int serverPage = 0;
+int detailDev = -1;   // index into the sorted order, -1 = grid
+int order[MAX_DEV];   // servers sorted: offline first, then ones with problems, then the rest
+int nOrder = 0;
+
+// Short history for sparklines: one sample per successful poll (30 s), so 32 samples = 16 min.
+const int HIST = 32;
+struct Hist { char name[22]; uint8_t cpu[HIST], temp[HIST]; int n; };
+Hist hist[MAX_DEV];
+int nHist = 0;
+uint32_t histOkAt = 0;
+
 float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 uint16_t levelColor(float v) { return v >= 85 ? C_BAD : v >= 65 ? C_WARN : C_OK; }
 
@@ -104,6 +127,7 @@ void parseInto(Snap& s, const String& body) {
   filter["devices"][0]["cpu"] = true;
   filter["devices"][0]["mem"] = true;
   filter["devices"][0]["temp"] = true;
+  filter["devices"][0]["problems"] = true;
   filter["internet"] = true;
   filter["ads"] = true;
   filter["power"]["watts"] = true;
@@ -115,13 +139,26 @@ void parseInto(Snap& s, const String& body) {
     strlcpy(s.prob[s.nProb++], p.as<const char*>() ? p.as<const char*>() : "?", sizeof(s.prob[0]));
   }
   for (JsonObject d : doc["devices"].as<JsonArray>()) {
-    if (s.nDev >= 3) break;
+    if (s.nDev >= MAX_DEV) break;
     Dev& v = s.dev[s.nDev++];
     strlcpy(v.name, d["name"] | "?", sizeof(v.name));
     v.online = d["online"] | true;
     v.cpu = d["cpu"].isNull() ? -1 : d["cpu"].as<float>();
     v.mem = d["mem"].isNull() ? -1 : d["mem"].as<float>();
     v.temp = d["temp"].isNull() ? -1 : d["temp"].as<float>();
+    JsonArray dp = d["problems"].as<JsonArray>();
+    v.nProb = dp.size();
+    strlcpy(v.prob, v.nProb ? (dp[0] | "?") : "", sizeof(v.prob));
+  }
+  for (int i = 0; i < DEMO_SERVERS && s.nDev < MAX_DEV; i++) {
+    Dev& v = s.dev[s.nDev++];
+    snprintf(v.name, sizeof v.name, "demo-%d", i + 1);
+    v.online = i != 2;
+    v.cpu = v.online ? 12 + i * 17 % 80 : -1;
+    v.mem = v.online ? 30 + i * 11 % 60 : -1;
+    v.temp = i % 2 ? -1 : 40 + i * 7;
+    v.nProb = (i == 2 || i == 4) ? 1 : 0;
+    strlcpy(v.prob, i == 2 ? "No reply for 6 min" : i == 4 ? "Disk 91% full" : "", sizeof v.prob);
   }
   s.netOn = doc["internet"]["online"] | false;
   s.ms = doc["internet"]["ms"] | -1;
@@ -238,6 +275,59 @@ int hourNow() {
   return getLocalTime(&t, 0) ? t.tm_hour : 12;
 }
 
+// Fills an area with the background and a faint dot grid, so empty space has a little texture.
+void bgFill(int x, int y, int w, int h) {
+  tft.fillRect(x, y, w, h, BG);
+  for (int py = ((y + 11) / 12) * 12; py < y + h; py += 12)
+    for (int px = ((x + 11) / 12) * 12; px < x + w; px += 12) tft.drawPixel(px, py, DOTS);
+}
+
+Hist* histFor(const char* name) {
+  for (int i = 0; i < nHist; i++) if (!strcmp(hist[i].name, name)) return &hist[i];
+  if (nHist >= MAX_DEV) return nullptr;
+  Hist* h = &hist[nHist++];
+  strlcpy(h->name, name, sizeof h->name);
+  h->n = 0;
+  return h;
+}
+
+void pushHist(uint8_t* a, int n, float v) {
+  if (n >= HIST) memmove(a, a + 1, HIST - 1);
+  a[min(n, HIST - 1)] = (uint8_t)clampf(v, 0, 100);
+}
+
+void recordHistory(const Snap& s) {
+  if (!s.valid || s.okAt == histOkAt) return;  // only once per new poll
+  histOkAt = s.okAt;
+  for (int i = 0; i < s.nDev; i++) {
+    Hist* h = histFor(s.dev[i].name);
+    if (!h) continue;
+    pushHist(h->cpu, h->n, max(0.0f, s.dev[i].cpu));
+    pushHist(h->temp, h->n, max(0.0f, s.dev[i].temp));
+    if (h->n < HIST) h->n++;
+  }
+}
+
+// Sparkline with a soft area fill and a bright end dot.
+void spark(int x, int y, int w, int h, const uint8_t* a, int n, float lo, float hi, uint16_t c, uint16_t bg) {
+  if (n < 2) { text("collecting...", x, y + h / 2 - 4, FAINT, 1, TL_DATUM, bg); return; }
+  if (hi < 0) {  // auto-scale around the samples, at least 10 units tall
+    float mn = 255, mx = 0;
+    for (int i = 0; i < n; i++) { mn = min(mn, (float)a[i]); mx = max(mx, (float)a[i]); }
+    lo = max(0.0f, mn - 2); hi = max(mx + 2, lo + 10);
+  }
+  uint16_t fill = tft.alphaBlend(60, c, bg);
+  int px = -1, py = -1;
+  for (int i = 0; i < n; i++) {
+    int xx = x + (int)((long)i * (w - 1) / (HIST - 1));
+    int yy = y + h - 1 - (int)((clampf(a[i], lo, hi) - lo) / (hi - lo) * (h - 1));
+    tft.drawFastVLine(xx, yy, y + h - yy, fill);
+    if (px >= 0) tft.drawLine(px, py, xx, yy, c);
+    px = xx; py = yy;
+  }
+  tft.fillSmoothCircle(px, py, 2, FG, bg);
+}
+
 // ---------- Pringle's little world: sky, weather and grass, then Pringle on top
 void maskCorners(int size, int r, uint16_t bg) {
   for (int y = 0; y < r; y++)
@@ -256,17 +346,38 @@ void cloud(int x, int y, int s, uint16_t c) {
   pet.fillRect(x + 6 * s, y + s, 3 * s, s, c);
 }
 
+void bird(int x, int y, int s, bool up) {
+  pet.fillRect(x, y + (up ? 0 : s), s, s, BIRD);
+  pet.fillRect(x + s, y + s, s, s, BIRD);
+  pet.fillRect(x + 2 * s, y + (up ? 0 : s), s, s, BIRD);
+}
+
+void flower(int x, int y, int s, uint16_t petal) {
+  pet.fillRect(x, y - s, s, s, petal);
+  pet.fillRect(x - s, y, 3 * s, s, petal);
+  pet.fillRect(x, y + s, s, 2 * s, GRASS_DK);
+  pet.fillRect(x, y, s, s, SUN);
+}
+
 void drawScene(int size, int s) {
   int h = hourNow();
-  bool night = mood == M_SLEEP || h >= 19 || h < 6;
+  bool night = mood == M_SLEEP || h >= 19 || h < 5;
+  bool dawn = !night && h < 7, dusk = !night && h >= 17;
   bool storm = mood == M_SAD;
   int ground = size - 9 * s;
 
   if (storm) pet.fillRectVGradient(0, 0, size, ground, STORM_TOP, STORM_BOT);
   else if (night) pet.fillRectVGradient(0, 0, size, ground, NIGHT_TOP, NIGHT_BOT);
+  else if (dawn) pet.fillRectVGradient(0, 0, size, ground, DAWN_TOP, DAWN_BOT);
+  else if (dusk) pet.fillRectVGradient(0, 0, size, ground, DUSK_TOP, DUSK_BOT);
   else pet.fillRectVGradient(0, 0, size, ground, DAY_TOP, DAY_BOT);
 
-  if (storm) {
+  if (!storm && (dawn || dusk)) {
+    // low sun sitting on the horizon, one thin cloud
+    pet.fillCircle((dawn ? 14 : 50) * s, ground - 2 * s, 8 * s, SUN_LOW);
+    int drift = (tick / 3) % 80;
+    cloud((drift - 12) * s, 10 * s, s, DAWN_BOT);
+  } else if (storm) {
     int off = (tick * 2 * s) % (14 * s);
     cloud(4 * s, 4 * s, s, STORMCLOUD);
     cloud(36 * s, 8 * s, s, STORMCLOUD);
@@ -281,10 +392,17 @@ void drawScene(int size, int s) {
     pet.fillCircle(52 * s, 11 * s, 5 * s, MOON);
     pet.fillCircle(49 * s, 9 * s, 5 * s, NIGHT_TOP);  // crescent
   } else {
+    // sun with blinking pixel rays, drifting clouds, a bird now and then
     pet.fillCircle(53 * s, 10 * s, 6 * s, SUN);
+    if (tick % 4 < 2) {
+      pet.fillRect(53 * s, 1 * s, s, 2 * s, SUN); pet.fillRect(53 * s, 18 * s, s, 2 * s, SUN);
+      pet.fillRect(44 * s, 10 * s, 2 * s, s, SUN); pet.fillRect(61 * s, 10 * s, 2 * s, s, SUN);
+    }
     int drift = (tick / 2) % 80;
     cloud((drift - 12) * s, 6 * s, s, CLOUD);
     cloud(((drift + 40) % 80 - 12) * s, 18 * s, s, CLOUD);
+    int bx = (int)(tick % 140) - 10;
+    if (bx < 70) bird(bx * s, 26 * s, s, (tick / 2) % 2);
   }
 
   // grass with pixel blades
@@ -292,6 +410,18 @@ void drawScene(int size, int s) {
   pet.fillRect(0, ground, size, size - ground, g);
   for (int x = 0; x < 64; x += 3) pet.fillRect(x * s, ground - s, s, s, (x / 3) % 2 ? g : gd);
   for (int x = 1; x < 64; x += 5) pet.fillRect(x * s, ground + 4 * s, s, s, gd);
+  if (!night && !storm) {
+    flower(4 * s, ground + 3 * s, s, PETAL);
+    flower(58 * s, ground + 2 * s, s, PETAL2);
+    flower(36 * s, ground + 5 * s, s, PETAL);
+  }
+  if (night && !storm) {  // fireflies wandering above the grass
+    for (int i = 0; i < 3; i++) {
+      int fx = (int)((i * 23 + tick * (i + 1) / 2) % 64);
+      int fy = ground / s - 6 - (int)((tick / 2 + i * 5) % 8);
+      if ((tick + i * 3) % 6 < 4) pet.fillRect(fx * s, fy * s, s, s, FIREFLY);
+    }
+  }
 }
 
 void drawPet(const uint16_t* img, int x, int y, int scale) {
@@ -371,12 +501,15 @@ void drawNav(const Snap& s) {
   }
 }
 
-void statCard(int x, int y, int w, const Icon& ic, const char* label, const char* num, const char* unit, float pct, uint16_t c) {
+// A stat card. With history it shows a 16-minute sparkline instead of a bar.
+void statCard(int x, int y, int w, const Icon& ic, const char* label, const char* num, const char* unit, float pct, uint16_t c,
+              const uint8_t* h = nullptr, int hn = 0, float lo = 0, float hi = 100) {
   card(x, y, w, 52);
   icon(tft, ic, x + 9, y + 8, c);
   text(label, x + 21, y + 8, DIM, 1, TL_DATUM, CARD);
   value(num, unit, x + w - 10, y + 15, FG, CARD);
-  bar(x + 9, y + 41, w - 18, 5, pct, c);
+  if (h) spark(x + 9, y + 21, 78, 24, h, hn, lo, hi, c, CARD);
+  else bar(x + 9, y + 41, w - 18, 5, pct, c);
 }
 
 float avgCpu(const Snap& s) {
@@ -393,13 +526,14 @@ void drawHome(const Snap& s) {
     pill(70, 166, "All good", C_OK, OK_BG);
   }
   const Dev* d = s.nDev ? &s.dev[0] : nullptr;
+  Hist* hs = d ? histFor(d->name) : nullptr;
   char b[16];
   float cpu = d && d->cpu >= 0 ? d->cpu : avgCpu(s);
   snprintf(b, sizeof b, "%d", (int)round(cpu));
-  statCard(144, 28, 168, IC_CPU, "CPU", b, "%", cpu, levelColor(cpu));
+  statCard(144, 28, 168, IC_CPU, "CPU", b, "%", cpu, levelColor(cpu), hs ? hs->cpu : nullptr, hs ? hs->n : 0, 0, -1);
   if (d && d->temp >= 0) {
     snprintf(b, sizeof b, "%d", (int)round(d->temp));
-    statCard(144, 86, 168, IC_TEMP, "Temperature", b, "C", d->temp, levelColor(d->temp + 10));
+    statCard(144, 86, 168, IC_TEMP, "Temperature", b, "C", d->temp, levelColor(d->temp + 10), hs ? hs->temp : nullptr, hs ? hs->n : 0, 0, -1);
   } else {
     float mem = d ? d->mem : 0;
     snprintf(b, sizeof b, "%d", (int)round(mem));
@@ -415,34 +549,194 @@ void drawHome(const Snap& s) {
   }
 }
 
-void devRow(int x, int y, const Icon& ic, const char* label, float v, float shade, bool deg) {
-  char b[12];
+// ---------- Server tab: 2x2 grid of tiles, 4 per page, tap a tile for details
+const int TILE_W = 151, TILE_H = 64, TILE_X[2] = {6, 163}, TILE_Y[2] = {50, 120};
+char detailName[22] = "";  // server shown in the detail view, "" = grid
+
+void sortServers(const Snap& s) {
+  nOrder = 0;
+  for (int rank = 0; rank < 3; rank++)  // offline first, then servers with problems, then the rest
+    for (int i = 0; i < s.nDev; i++) {
+      const Dev& d = s.dev[i];
+      int r = !d.online ? 0 : d.nProb ? 1 : 2;
+      if (r == rank) order[nOrder++] = i;
+    }
+}
+
+int pageCount() { return max(1, (nOrder + PER_PAGE - 1) / PER_PAGE); }
+
+// fits a name into a pixel width in Font 2, adding ".." when cut
+void fitName(char* out, size_t n, const char* name, int maxW) {
+  strlcpy(out, name, n);
+  tft.setTextFont(2); tft.setTextSize(1);
+  int len = strlen(out);
+  if (tft.textWidth(out) <= maxW) return;
+  while (len > 1) {
+    out[--len] = 0;
+    char tmp[26]; snprintf(tmp, sizeof tmp, "%s..", out);
+    if (tft.textWidth(tmp) <= maxW) { strlcpy(out, tmp, n); return; }
+  }
+}
+
+void statusDot(int x, int y, bool online, uint16_t bg) {
+  uint16_t st = online ? C_OK : C_BAD, halo = online ? OK_BG : BAD_BG;
+  tft.fillSmoothCircle(x, y, 6, halo, bg);
+  tft.fillSmoothCircle(x, y, 3, st, halo);
+}
+
+void miniRow(int x, int y, int w, const char* label, float v, float shade, bool deg, uint16_t bg) {
+  text(label, x, y, DIM, 1, TL_DATUM, bg);
+  if (v < 0) { text("--", x + w, y, FAINT, 1, TR_DATUM, bg); return; }
+  char b[10];
   snprintf(b, sizeof b, deg ? "%dC" : "%d%%", (int)round(v));
-  uint16_t c = levelColor(shade);
-  icon(tft, ic, x, y, c);
-  text(label, x + 11, y, DIM, 1, TL_DATUM, CARD);
-  text(b, x + 88, y, FG, 1, TR_DATUM, CARD);
-  bar(x, y + 11, 88, 5, v, c);
+  text(b, x + w, y, FG, 1, TR_DATUM, bg);
+  int bx = x + 28, bw = w - 28 - 30;
+  tft.fillSmoothRoundRect(bx, y + 2, bw, 4, 2, LINE, bg);
+  int fw = (int)(bw * clampf(deg ? v : v, 0, 100) / 100.0f);
+  if (fw > 0) tft.fillSmoothRoundRect(bx, y + 2, max(fw, 4), 4, 2, levelColor(shade), LINE);
+}
+
+void serverTile(int x, int y, const Dev& d) {
+  uint16_t bg = d.online ? CARD : OFFLINE_CARD;
+  tft.fillSmoothRoundRect(x, y, TILE_W, TILE_H, 8, bg, BG);
+  tft.drawFastHLine(x + 8, y, TILE_W - 16, d.online ? CARD_HI : BAD_BG);
+  if (!d.online || d.nProb) tft.drawSmoothRoundRect(x, y, 8, 7, TILE_W - 1, TILE_H - 1, d.online ? C_WARN : C_BAD, BG);
+  statusDot(x + 13, y + 13, d.online, bg);
+  char name[24];
+  fitName(name, sizeof name, d.name, TILE_W - 26 - (d.nProb ? 14 : 4));
+  text(name, x + 24, y + 5, FG, 1, TL_DATUM, bg, 2);
+  if (d.nProb) icon(tft, IC_WARN, x + TILE_W - 15, y + 9, d.online ? C_WARN : C_BAD);
+  if (!d.online) {
+    text("OFFLINE", x + TILE_W / 2, y + 30, C_BAD, 2, TC_DATUM, bg);
+    if (d.nProb) { char p[24]; strlcpy(p, d.prob, sizeof p); text(p, x + TILE_W / 2, y + 50, DIM, 1, TC_DATUM, bg); }
+    return;
+  }
+  miniRow(x + 10, y + 26, TILE_W - 20, "CPU", d.cpu, d.cpu, false, bg);
+  miniRow(x + 10, y + 38, TILE_W - 20, "RAM", d.mem, d.mem, false, bg);
+  miniRow(x + 10, y + 50, TILE_W - 20, "Temp", d.temp, d.temp + 10, true, bg);
+}
+
+void chip(int x, int y, int w, int h, const char* label, bool enabled) {
+  tft.fillSmoothRoundRect(x, y, w, h, h / 2, enabled ? NAV_ACT : CARD, BG);
+  text(label, x + w / 2, y + h / 2 - 7, enabled ? FG : FAINT, 2, TC_DATUM, enabled ? NAV_ACT : CARD);
+}
+
+void drawServerGrid(const Snap& s) {
+  int pages = pageCount();
+  if (serverPage >= pages) serverPage = pages - 1;
+  int up = 0;
+  for (int i = 0; i < s.nDev; i++) up += s.dev[i].online;
+  int down = s.nDev - up;
+
+  // header: paging chips and a one-line summary
+  if (pages > 1) { chip(6, 24, 46, 22, "<", true); chip(268, 24, 46, 22, ">", true); }
+  char b[40];
+  snprintf(b, sizeof b, "%d server%s", s.nDev, s.nDev == 1 ? "" : "s");
+  tft.setTextFont(1); tft.setTextSize(1);
+  char upS[12], downS[12];
+  snprintf(upS, sizeof upS, "%d up", up);
+  snprintf(downS, sizeof downS, "%d down", down);
+  int wTotal = tft.textWidth(b) + 14 + tft.textWidth(upS) + (down ? 14 + tft.textWidth(downS) : 0);
+  int x = W / 2 - wTotal / 2;
+  icon(tft, IC_SERVER, x - 12, 26, DIM);
+  text(b, x, 27, FG); x += tft.textWidth(b) + 8;
+  tft.fillSmoothCircle(x + 2, 30, 2, C_OK, BG); x += 6;
+  text(upS, x, 27, C_OK); x += tft.textWidth(upS) + 8;
+  if (down) { tft.fillSmoothCircle(x + 2, 30, 2, C_BAD, BG); text(downS, x + 6, 27, C_BAD); }
+  if (pages > 1)
+    for (int p = 0; p < pages; p++) {
+      int dx = W / 2 - (pages - 1) * 6 + p * 12;
+      if (p == serverPage) tft.fillSmoothRoundRect(dx - 5, 39, 10, 4, 2, ACC, BG);
+      else tft.fillSmoothCircle(dx, 41, 2, FAINT, BG);
+    }
+
+  for (int k = 0; k < PER_PAGE; k++) {
+    int idx = serverPage * PER_PAGE + k;
+    int tx = TILE_X[k % 2], ty = TILE_Y[k / 2];
+    if (idx < nOrder) serverTile(tx, ty, s.dev[order[idx]]);
+    else if (pages > 1 || k < 2) {  // empty slot: dashed outline so the grid keeps its shape
+      for (int i = 8; i < TILE_W - 8; i += 6) { tft.drawFastHLine(tx + i, ty, 3, LINE); tft.drawFastHLine(tx + i, ty + TILE_H - 1, 3, LINE); }
+      for (int i = 8; i < TILE_H - 8; i += 6) { tft.drawFastVLine(tx, ty + i, 3, LINE); tft.drawFastVLine(tx + TILE_W - 1, ty + i, 3, LINE); }
+    }
+  }
+}
+
+void detailRow(int x, int y, int w, const Icon& ic, const char* label, float v, float shade, bool deg) {
+  uint16_t c = v < 0 ? FAINT : levelColor(shade);
+  icon(tft, ic, x, y + 2, c);
+  text(label, x + 14, y + 2, DIM, 1, TL_DATUM, CARD);
+  char b[10];
+  if (v < 0) strcpy(b, "--"); else snprintf(b, sizeof b, deg ? "%dC" : "%d%%", (int)round(v));
+  text(b, x + w, y - 2, FG, 1, TR_DATUM, CARD, 2);
+  int bx = x + 52, bw = w - 52 - 46;
+  tft.fillSmoothRoundRect(bx, y + 2, bw, 8, 4, LINE, CARD);
+  int fw = v < 0 ? 0 : (int)(bw * clampf(v, 0, 100) / 100.0f);
+  if (fw > 0) tft.fillSmoothRoundRect(bx, y + 2, max(fw, 8), 8, 4, c, LINE);
+}
+
+void drawServerDetail(const Snap& s, const Dev& d) {
+  chip(6, 24, 62, 26, "< Back", true);
+  char name[24];
+  fitName(name, sizeof name, d.name, 160);
+  text(name, 78, 29, FG, 1, TL_DATUM, BG, 2);
+  statusDot(W - 64, 37, d.online, BG);
+  text(d.online ? "online" : "offline", W - 54, 33, d.online ? C_OK : C_BAD);
+
+  card(6, 56, W - 12, 130);
+  detailRow(18, 68, W - 36, IC_CPU, "CPU", d.cpu, d.cpu, false);
+  detailRow(18, 90, W - 36, IC_RAM, "RAM", d.mem, d.mem, false);
+  detailRow(18, 112, W - 36, IC_TEMP, "Temp", d.temp, d.temp + 10, true);
+
+  int y = 136;
+  if (d.nProb) {
+    icon(tft, IC_WARN, 18, y, C_BAD);
+    char p[40]; strlcpy(p, d.prob, sizeof p);
+    text(p, 32, y, C_BAD, 1, TL_DATUM, CARD);
+    y += 14;
+  }
+  Hist* h = histFor(d.name);
+  int sh = 180 - y - 12;
+  text("CPU, last 16 min", 18, y, FAINT, 1, TL_DATUM, CARD);
+  text("Temp, last 16 min", 166, y, FAINT, 1, TL_DATUM, CARD);
+  if (h) {
+    spark(18, y + 12, 136, sh, h->cpu, h->n, 0, -1, levelColor(d.cpu), CARD);
+    if (d.temp >= 0) spark(166, y + 12, 136, sh, h->temp, h->n, 0, -1, levelColor(d.temp + 10), CARD);
+  }
 }
 
 void drawServer(const Snap& s) {
-  if (!s.nDev) { text("No devices reported", W / 2, 100, DIM, 2, TC_DATUM); return; }
-  int n = s.nDev, gap = 6, h = (174 - gap * (n - 1)) / n;
-  if (h > 62) h = 62;
-  for (int i = 0; i < n; i++) {
-    const Dev& d = s.dev[i];
-    int y = TOP_H + 4 + i * (h + gap);
-    card(6, y, W - 12, h);
-    uint16_t st = d.online ? C_OK : C_BAD, halo = d.online ? OK_BG : BAD_BG;
-    tft.fillSmoothCircle(18, y + 12, 6, halo, CARD);
-    tft.fillSmoothCircle(18, y + 12, 3, st, halo);
-    text(d.name, 30, y + 5, FG, 2, TL_DATUM, CARD);
-    text(d.online ? "online" : "OFFLINE", W - 16, y + 9, st, 1, TR_DATUM, CARD);
-    int col = 0, ry = y + h - 21;
-    if (d.cpu >= 0) devRow(16 + 100 * col++, ry, IC_CPU, "CPU", d.cpu, d.cpu, false);
-    if (d.mem >= 0) devRow(16 + 100 * col++, ry, IC_RAM, "RAM", d.mem, d.mem, false);
-    if (d.temp >= 0) devRow(16 + 100 * col++, ry, IC_TEMP, "Temp", d.temp, d.temp + 10, true);
+  sortServers(s);
+  if (!s.nDev) { text("No servers reported", W / 2, 100, DIM, 2, TC_DATUM); return; }
+  if (detailName[0]) {
+    for (int i = 0; i < s.nDev; i++)
+      if (!strcmp(s.dev[i].name, detailName)) { drawServerDetail(s, s.dev[i]); return; }
+    detailName[0] = 0;  // that server is gone: fall back to the grid
   }
+  drawServerGrid(s);
+}
+
+// Taps inside the Server tab. Returns true when the page needs a redraw.
+bool serverTap(int x, int y) {
+  if (detailName[0]) {
+    if (y < 56 && x < 110) { detailName[0] = 0; return true; }
+    return false;
+  }
+  int pages = pageCount();
+  if (y < 48 && pages > 1) {
+    if (x < 80) { serverPage = (serverPage + pages - 1) % pages; return true; }
+    if (x > 240) { serverPage = (serverPage + 1) % pages; return true; }
+    return false;
+  }
+  for (int k = 0; k < PER_PAGE; k++) {
+    int tx = TILE_X[k % 2], ty = TILE_Y[k / 2], idx = serverPage * PER_PAGE + k;
+    if (idx < nOrder && x >= tx - 3 && x < tx + TILE_W + 3 && y >= ty - 3 && y < ty + TILE_H + 3) {
+      xSemaphoreTake(snapLock, portMAX_DELAY);
+      strlcpy(detailName, snap.dev[order[idx]].name, sizeof detailName);
+      xSemaphoreGive(snapLock);
+      return true;
+    }
+  }
+  return false;
 }
 
 void drawAds(const Snap& s) {
@@ -539,9 +833,10 @@ void drawAll() {
   runEveryMs = (uint32_t)max(60.0f, 200.0f - cpu / 100.0f * 140.0f);
   setLed(!s.valid || s.stale ? ACC : s.nProb ? C_BAD : (s.hasAds && !s.adsOn) ? C_WARN : C_OK);
 
+  recordHistory(s);
   drawTopBar(s);
   if (!s.valid) { drawOffline(s); drawPetForTab(); return; }
-  tft.fillRect(0, TOP_H, W, NAV_Y - TOP_H, BG);
+  bgFill(0, TOP_H, W, NAV_Y - TOP_H);
   switch (tab) {
     case T_HOME: drawHome(s); break;
     case T_SERVER: drawServer(s); break;
@@ -604,7 +899,10 @@ void loop() {
     lastTouchAt = now;
     if (y >= NAV_Y - 10) {
       Tab t = (Tab)constrain(x / 80, 0, 3);
+      if (t == T_SERVER && tab == T_SERVER && detailName[0]) { detailName[0] = 0; pageDirty = true; }  // tap Server again: back to the grid
       if (t != tab) { tab = t; pageDirty = true; }
+    } else if (tab == T_SERVER && dataShown && serverTap(x, y)) {
+      pageDirty = true;
     }
   }
 
