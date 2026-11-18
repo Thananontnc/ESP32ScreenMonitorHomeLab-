@@ -1,0 +1,260 @@
+<title>Pringle Desk Panel</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: device mockup on the left, state switcher + design notes on the right; stacks on phones. */
+:root {
+  --bg: #f3f4f7; --fg: #1b2030; --muted: #5d6578; --line: #dde1ea; --card: #ffffff;
+  --accent: #3b6fe0; --pcb: #e9c43a; --pcb-edge: #b8951c;
+  --f-pixel: "Pixelify Sans", "Courier New", monospace;
+  --f-body: "Inter", system-ui, -apple-system, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  /* on-device palette: fixed, the TFT is always dark */
+  --s-bg: #10131a; --s-card: #1b2130; --s-line: #2a3246; --s-fg: #e8ecf4; --s-dim: #8a93a6;
+  --s-ok: #4cd387; --s-warn: #ffb547; --s-bad: #ff5d6c; --s-acc: #4a7df0;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12151c; --fg: #e6e9f0; --muted: #98a0b3; --line: #2a303d; --card: #1a1e28; --accent: #7aa0ff; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #12151c; --fg: #e6e9f0; --muted: #98a0b3; --line: #2a303d; --card: #1a1e28; --accent: #7aa0ff; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); line-height: 1.5; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header h1 { font-family: var(--f-pixel); font-weight: 600; font-size: 2rem; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 65ch; }
+.grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 32px; margin-top: 24px; align-items: start; }
+@media (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* the board */
+.board { background: var(--pcb); border: 2px solid var(--pcb-edge); border-radius: 10px; padding: 18px 18px 26px 18px; position: relative; }
+.board::after { content: "ESP32-2432S028R"; position: absolute; left: 18px; bottom: 5px; font: 600 10px var(--f-mono); color: #6b5410; letter-spacing: .08em; }
+.board .led { position: absolute; right: 18px; bottom: 8px; width: 10px; height: 10px; border-radius: 50%; background: var(--s-ok); box-shadow: 0 0 10px var(--s-ok); transition: background .3s, box-shadow .3s; }
+.bezel { background: #050608; border-radius: 4px; padding: 8px; }
+.viewport { width: 100%; aspect-ratio: 4 / 3; position: relative; overflow: hidden; border-radius: 2px; max-width: 100%; }
+.screen { width: 320px; height: 240px; position: absolute; left: 0; top: 0; transform-origin: 0 0;
+  background: var(--s-bg); color: var(--s-fg); font-family: var(--f-pixel); overflow: hidden; user-select: none; transition: filter .4s; }
+.screen.dim { filter: brightness(.55); }
+.scale-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+/* on-screen pieces (all in 320x240 px) */
+.top { height: 20px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; font-size: 11px; color: var(--s-dim); border-bottom: 1px solid var(--s-line); }
+.top b { color: var(--s-fg); font-weight: 400; }
+.page { position: absolute; left: 0; right: 0; top: 20px; bottom: 40px; padding: 8px; }
+.nav { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--s-line); background: #0b0d12; }
+.nav button { all: unset; cursor: pointer; display: grid; place-items: center; font: 400 12px var(--f-pixel); color: var(--s-dim); position: relative; }
+.nav button[aria-current="true"] { color: var(--s-fg); }
+.nav button[aria-current="true"]::before { content: ""; position: absolute; top: 0; left: 18%; right: 18%; height: 3px; background: var(--s-acc); }
+.nav button:focus-visible { outline: 2px solid var(--s-acc); outline-offset: -2px; }
+.nav .dot { position: absolute; top: 7px; right: 16px; width: 7px; height: 7px; border-radius: 50%; background: var(--s-bad); }
+
+.home { display: grid; grid-template-columns: 136px 1fr; gap: 8px; height: 100%; }
+.pet { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+.pet img { width: 128px; height: 128px; image-rendering: pixelated; }
+.pill { font-size: 12px; padding: 2px 10px; border-radius: 10px; background: rgba(76,211,135,.15); color: var(--s-ok); white-space: nowrap; }
+.pill.warn { background: rgba(255,93,108,.15); color: var(--s-bad); }
+.pill.off { background: rgba(138,147,166,.15); color: var(--s-dim); }
+.stats { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.stat { background: var(--s-card); border-radius: 6px; padding: 5px 8px; display: grid; grid-template-columns: 1fr auto; align-items: baseline; }
+.stat span { font-size: 11px; color: var(--s-dim); }
+.stat strong { font: 700 17px var(--f-mono); font-variant-numeric: tabular-nums; }
+.stat i { grid-column: 1 / -1; height: 4px; background: var(--s-line); border-radius: 2px; margin-top: 4px; overflow: hidden; font-style: normal; }
+.stat i::after { content: ""; display: block; height: 100%; width: var(--v); background: var(--c, var(--s-acc)); border-radius: 2px; }
+
+.list { display: flex; flex-direction: column; gap: 6px; }
+.dev { background: var(--s-card); border-radius: 6px; padding: 6px 8px; }
+.dev h3 { margin: 0 0 4px; font: 600 13px var(--f-pixel); display: flex; justify-content: space-between; }
+.dev h3 small { font: 500 11px var(--f-mono); color: var(--s-dim); }
+.bars { display: grid; grid-template-columns: 36px 1fr 40px; gap: 2px 6px; align-items: center; font-size: 11px; color: var(--s-dim); }
+.bars b { height: 6px; background: var(--s-line); border-radius: 3px; overflow: hidden; }
+.bars b::after { content: ""; display: block; height: 100%; width: var(--v); background: var(--c); }
+.bars em { font: 500 11px var(--f-mono); font-style: normal; color: var(--s-fg); text-align: right; font-variant-numeric: tabular-nums; }
+
+.ads { display: grid; grid-template-columns: 112px 1fr; gap: 10px; align-items: center; height: 100%; }
+.ring { width: 112px; height: 112px; }
+.ring text { font-family: var(--f-mono); fill: var(--s-fg); }
+.ads .big { font: 700 26px var(--f-mono); line-height: 1; }
+.ads p { margin: 2px 0 10px; font-size: 11px; color: var(--s-dim); }
+.btn { all: unset; cursor: pointer; display: block; text-align: center; height: 44px; line-height: 44px; border-radius: 8px; font: 600 15px var(--f-pixel); background: var(--s-acc); color: #fff; }
+.btn.ghost { background: transparent; border: 2px solid var(--s-warn); color: var(--s-warn); line-height: 40px; }
+.btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+.alert { background: var(--s-card); border-left: 3px solid var(--s-bad); border-radius: 4px; padding: 6px 8px; font-size: 12px; }
+.alert small { display: block; color: var(--s-dim); font-size: 10px; }
+.calm { display: flex; align-items: center; gap: 8px; height: 100%; }
+.calm img { width: 96px; height: 96px; image-rendering: pixelated; }
+.calm h2 { margin: 0; font: 600 16px var(--f-pixel); }
+.calm p { margin: 2px 0 0; font-size: 11px; color: var(--s-dim); }
+
+.offline { position: absolute; inset: 20px 0 0 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; background: var(--s-bg); }
+.offline img { width: 112px; height: 112px; image-rendering: pixelated; }
+.offline h2 { margin: 0; font: 600 16px var(--f-pixel); }
+.offline p { margin: 0; font-size: 11px; color: var(--s-dim); }
+.toast { position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); background: #fff; color: #10131a; font: 600 12px var(--f-pixel); padding: 4px 12px; border-radius: 12px; white-space: nowrap; }
+
+/* right column */
+.panel { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.panel h2 { font-family: var(--f-pixel); font-weight: 600; font-size: 1.15rem; margin: 0 0 8px; }
+.seg { display: flex; flex-wrap: wrap; gap: 8px; }
+.seg button { font: 500 14px var(--f-body); padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+.seg button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+.rules { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.rules li { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; font-size: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.rules li b { font-weight: 600; }
+.rules li span { color: var(--muted); }
+code { font-family: var(--f-mono); font-size: .9em; }
+@media (prefers-reduced-motion: reduce) { .board .led { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Pringle Desk Panel</h1>
+    <p>Mockup of the 2.8" CYD screen for the homelab, drawn at its real 320 × 240 pixels and scaled up. Tap the tabs and buttons on the screen. The numbers are examples.</p>
+  </header>
+
+  <div class="grid">
+    <div>
+      <div class="board">
+        <div class="bezel">
+          <div class="viewport" id="viewport">
+            <div class="screen" id="screen" role="application" aria-label="CYD screen mockup"></div>
+          </div>
+        </div>
+        <div class="led" id="led" title="On-board RGB LED"></div>
+      </div>
+      <p class="scale-note">Every size here is in real screen pixels. The tabs are 80 × 40 px and the buttons 44 px tall, because the resistive touch is not precise.</p>
+    </div>
+
+    <div class="panel">
+      <section>
+        <h2>Homelab state</h2>
+        <div class="seg" id="modes">
+          <button type="button" id="m-ok" data-mode="ok" aria-pressed="true">All good</button>
+          <button type="button" id="m-busy" data-mode="busy" aria-pressed="false">Busy</button>
+          <button type="button" id="m-bad" data-mode="bad" aria-pressed="false">Problem</button>
+          <button type="button" id="m-off" data-mode="off" aria-pressed="false">Can't reach</button>
+        </div>
+        <p class="hint">Same moods as the Mac menu bar app: Pringle runs when all is well (faster when CPU is high), looks worried on a problem, and sleeps when the homelab can't be reached.</p>
+      </section>
+
+      <section>
+        <h2>UX rules for the panel</h2>
+        <ul class="rules">
+          <li><b>Readable from 2 m</b><span>Home shows one mood and three numbers. Details live one tap away.</span></li>
+          <li><b>Status shows 3 ways</b><span>Pringle's pose, the colored pill and the board's RGB LED all agree, so you can see a problem without reading anything.</span></li>
+          <li><b>Big targets</b><span>Nothing tappable under 40 px. The bottom tabs stay in the same place on every screen.</span></li>
+          <li><b>Safe actions</b><span>"Pause ads" asks for a second tap, runs a 10-minute timer and always shows a Resume button.</span></li>
+          <li><b>Calm at night</b><span>The light sensor (GPIO 34) dims the backlight. After 23:00 the screen sleeps until touched.</span></li>
+          <li><b>One data source</b><span>The panel reads the same <code>/api/menubar</code> JSON as the Mac app, so both always agree.</span></li>
+        </ul>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+const SPR = {
+RUN0:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAABYlAAAWJQFJUiTwAAABfklEQVR42u3bPU7DQBCG4ZwDcQEkahoqWu7ABWioOAeHQEpNwyFcQEHBASjpgSJFkFYaiYyYjNf2OjPxu9JXJFnvz6M466zl1YpCmbWcnJ5v/yZ6uwBMPcCvx+eSzeanRA9YT8SKri/tSfvhIABwACRX6++92b7cl+jjAIgKYA1UA3gTt2K1awEDMPfEvYFd3nSTxOvP+tEF4NAArQJAVAB5//PtqWm8/gEAAIBYAFL6Ann1AcgGoJexvl9xAAAAIDeAbGBIapc763gAsl8I6Xre66O7Elw8wNCJAxAdoPWfonQ7QosFaLU1lmZT9OgBhkLobW6d2m3wg008LYB3O3ouAMnZxV3J0BshAPQFaLV8pDkFAFANSplq2apdDsfWA2DqUyBrutf3EgBql0EAANjfsPUjCQCnQKyJAzAUQA4EYGkAFoQFEu3z0RMHoPLBhSwBYOyW1ke33on16IpXL3q/AAAAwP8Debi93ok1EK9e9H4BqF0Oa+tF73dxAL+NDHLFD4sAPwAAAABJRU5ErkJggg==",
+RUN1:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAABYlAAAWJQFJUiTwAAABf0lEQVR42u3bP07DMBTH8Z6j4gJInVmYWLkDF+jCxDk4BFJnFg6RAQYGDtCRHRg6FMnSk9onvb7YtWO7+Vr6DW0d//moqVNHWSwmLsur1f4wrbcLQO4B/ry8hex2fyF6wHoiVnR9aU/abw4CAAdAcrf5PZn9+1OIPg6AVgGsgWoAb+JWrHYtYACmnrg3sNuHIUu8/qwfXQBqA5QKAK0CyPvfn69F4/UPAAAAtAUgZSyQVx+A3gD0Mjb2Kw4AAAD0DSAbGJLY5c46HoDeL4R0Pe/1xV0Jzh4gdeIAtA5Q+k9RdztCswUotTXWzaboxQOkQuhtbp3YbfBqE+8WwLsdPRWA5PrmMST1RggAYwFKLR/dnAIAqAal5Fq2YpfDc+sBkPsU6DXDx1cIALHLIAAAnG7Y+pEEgFOgrYkDkAogBwIwNwALwgJp7fOzJw5A5IMLvQSAXJub22FzFOsRFq9e7X4AAACANIDn9f1RrIF59Wr3A0DuZTG2Xu1+AKBQQvkHCB1yxWBRg7EAAAAASUVORK5CYII=",
+RUN2:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAABYlAAAWJQFJUiTwAAABfklEQVR42u3bPU7DQBCG4ZwDcQEkahoqWu7ABWioOAeHQEpNwyFcQEHBASjpgSJFkFYaiYyYjNf2OjPxu9JXJFnvz6M466zl1YpCmbWcnJ5v/yZ6uwBMPcCvx+eSzeanRA9YT8SKri/tSfvhIABwACRX6++92b7cl+jjAIgKYA1UA3gTt2K1awEDMPfEvYFd3nSTxOvP+tEF4NAArQJAVAB5//PtqWm8/gEAAIBYAFL6Ann1AcgGoJexvl9xAAAAIDeAbGBIapc763gAsl8I6Xre66O7Elw8wNCJAxAdoPWfonQ7QosFaLU1lmZT9OgBhkLobW6d2m3wg008LYB3O3ouAMnZxV3J0BshAPQFaLV8pDkFAFANSplq2apdDsfWA2DqUyBrutf3EgBql0EAANjfsPUjCQCnQKyJAzAUQA4EYGkAFoQFEu3z0RMHoPLBhSwBYOyW1ke33on16IpXL3q/AAAAwP8Debi93ok1EK9e9H4BqF0Oa+tF73dxAL+NDHLFD4sAPwAAAABJRU5ErkJggg==",
+RUN3:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAABYlAAAWJQFJUiTwAAABf0lEQVR42u3bP07DMBTH8Z6j4gJInVmYWLkDF+jCxDk4BFJnFg6RAQYGDtCRHRg6FMnSk9onvb7YtWO7+Vr6DW0d//moqVNHWSwmLsur1f4wrbcLQO4B/ry8hex2fyF6wHoiVnR9aU/abw4CAAdAcrf5PZn9+1OIPg6AVgGsgWoAb+JWrHYtYACmnrg3sNuHIUu8/qwfXQBqA5QKAK0CyPvfn69F4/UPAAAAtAUgZSyQVx+A3gD0Mjb2Kw4AAAD0DSAbGJLY5c46HoDeL4R0Pe/1xV0Jzh4gdeIAtA5Q+k9RdztCswUotTXWzaboxQOkQuhtbp3YbfBqE+8WwLsdPRWA5PrmMST1RggAYwFKLR/dnAIAqAal5Fq2YpfDc+sBkPsU6DXDx1cIALHLIAAAnG7Y+pEEgFOgrYkDkAogBwIwNwALwgJp7fOzJw5A5IMLvQSAXJub22FzFOsRFq9e7X4AAACANIDn9f1RrIF59Wr3A0DuZTG2Xu1+AKBQQvkHCB1yxWBRg7EAAAAASUVORK5CYII=",
+SAD:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAABYlAAAWJQFJUiTwAAABiklEQVR42u3bPU7DQBCG4ZwDcQEkahoq2pwBLkBDxTk4BFJqGg7hAgoKDpCSHihSONJKIyUjxuvN/niMX0tfE6/355G8G6/l1YqDo+lxdn7ZH8Z7vQCU7uD382vIbvcbojusB2JFl5f6pH53EABEACQ3m5/B9G+PIfo6AGoBbNe3/WFyJyfpqAaIDdyKVa8FDEArgLEdu77riiTWnjXpAjA1QK0A4BVAfv/6eKmaWPsAAACALwA9iY0dYKw+AAAAIA8g9/EXAG6BYQDZwJCkLnfW9QD8lz9C1sPOYv4JTg7QahK0BpB7HgBvALUfiopviABQCaDW1ljxTVEAGkPobW6d1G3wyQY+W4DY6+hWAJKLq4eQU1+EADAWoNbyMZtbAABVoRyllq3U5TC3HAClb4G5pnv/DAEgdRkEAIDhiq1JEgBuAV8DB+BUALkQgKUBWBAWiLfz2QMHIPHDhbkEgNwtrW23OYr16UqsnPd2AQAAgL878nS/PorVkVg57+0CkLocppbz3u7iAPbLrhP0ZPPnAQAAAABJRU5ErkJggg==",
+SLEEP:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAABYlAAAWJQFJUiTwAAABjklEQVR42u3bP07DMBTH8Z6j4gJIzF2YWLkDF2DpVIlblDsgdWbhDmSgQwcOwMgOHToEyZIl+pRXx7FfajffSL+pjv98JPuprjqb8fCM+syvbtr/Kb3f6QE8Pb+3Xck1wZ+XN5fDYe8iJywXokW29/35/gdDTB5AA7EG8Lnb/J5M+7Fyke8BkBsg98LlRCVAaOFatH41YADGOgT7Tuz2ocmS0HjaoQtAaplMBbAKAFYAfQ/J0KH3vXs1TWh8AM61BQC4lC0wtAwCAEA3gCxjfRcY6g8AAAAoG8BfYPjEHnba+wBQBgG4DADt6y4AtQJYb4XRLkQASASwuhozvxQFwBhCXnPLxF6Dn23h1QKEfo4eC8DnerF0GfpDCAB9AazKRzVbAADRoX9yla3YcpjaDoDcW6DWNNtPFwBiyyAAAJzuWDskAWALlLVwAIYC+BcBmBqABqGBlPZ58sIBiPzjQi0BIPVK66vZHEX760qoXenjAgAAAN0TWT/eH0WbSKhd6eMCEFsOY9uVPu7kAP4AR2Ag+Lys6pgAAAAASUVORK5CYII="
+};
+const DATA = {
+  ok:   { cpu: 18, temp: 47, mem: 41, blocked: 18.6, nBlocked: 4127, queries: 22190, ms: 12, watts: 21, problems: [],
+          devs: [{ n: "Lenovo · Proxmox", up: "up 12d", cpu: 18, mem: 41, temp: 47 }, { n: "ai-workspace", up: "up 3d", cpu: 9, mem: 63, temp: null }] },
+  busy: { cpu: 82, temp: 71, mem: 77, blocked: 21.3, nBlocked: 5210, queries: 24460, ms: 15, watts: 58, problems: [],
+          devs: [{ n: "Lenovo · Proxmox", up: "up 12d", cpu: 82, mem: 77, temp: 71 }, { n: "ai-workspace", up: "up 3d", cpu: 94, mem: 88, temp: null }] },
+  bad:  { cpu: 22, temp: 49, mem: 44, blocked: 18.1, nBlocked: 4002, queries: 22100, ms: 14, watts: 23,
+          problems: [{ t: "Vaultwarden is down", s: "No reply for 4 min" }, { t: "Disk 91% full", s: "Lenovo · local-lvm" }],
+          devs: [{ n: "Lenovo · Proxmox", up: "up 12d", cpu: 22, mem: 44, temp: 49 }, { n: "ai-workspace", up: "up 3d", cpu: 11, mem: 60, temp: null }] },
+};
+let mode = "ok", tab = "home", frame = 0, timer = null, paused = 0, confirmPause = false, toast = "";
+const screen = document.getElementById("screen"), led = document.getElementById("led");
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const col = v => v >= 85 ? "var(--s-bad)" : v >= 65 ? "var(--s-warn)" : "var(--s-ok)";
+const fmt = n => n.toLocaleString("en-US");
+
+function petSrc() { return mode === "off" ? SPR.SLEEP : mode === "bad" ? SPR.SAD : SPR["RUN" + frame]; }
+function pill() {
+  if (mode === "off") return `<span class="pill off">Can't reach</span>`;
+  if (mode === "bad") return `<span class="pill warn">${DATA.bad.problems.length} problems</span>`;
+  return `<span class="pill">All good</span>`;
+}
+function top() {
+  const d = DATA[mode] || DATA.ok;
+  return `<div class="top"><b>21:42</b><span>${mode === "off" ? "WiFi ok · server ?" : "Lenovo · " + d.ms + " ms"}</span><span>${paused ? "Ads paused" : "Ads on"}</span></div>`;
+}
+function nav() {
+  const t = [["home", "Home"], ["server", "Server"], ["ads", "Ads"], ["alerts", "Alerts"]];
+  return `<div class="nav">${t.map(([k, l]) => `<button id="tab-${k}" data-tab="${k}" aria-current="${tab === k}">${l}${k === "alerts" && mode === "bad" ? '<span class="dot"></span>' : ""}</button>`).join("")}</div>`;
+}
+function home(d) {
+  const s = (label, val, v, c) => `<div class="stat"><span>${label}</span><strong>${val}</strong><i style="--v:${v}%;--c:${c}"></i></div>`;
+  return `<div class="home"><div class="pet"><img id="pet" alt="Pringle" src="${petSrc()}">${pill()}</div>
+    <div class="stats">${s("CPU", d.cpu + "%", d.cpu, col(d.cpu))}${s("Temp", d.temp + "°C", d.temp, col(d.temp + 10))}${s("Ads blocked today", d.blocked + "%", d.blocked * 3, "var(--s-acc)")}</div></div>`;
+}
+function server(d) {
+  const b = (l, v, txt) => `<span>${l}</span><b style="--v:${v}%;--c:${col(v)}"></b><em>${txt}</em>`;
+  return `<div class="list">${d.devs.map(x => `<div class="dev"><h3>${x.n}<small>${x.up}</small></h3><div class="bars">
+    ${b("CPU", x.cpu, x.cpu + "%")}${b("RAM", x.mem, x.mem + "%")}${x.temp != null ? b("Temp", x.temp + 10, x.temp + "°C") : ""}</div></div>`).join("")}</div>`;
+}
+function ads(d) {
+  const r = 46, c = 2 * Math.PI * r, f = paused ? 0 : d.blocked / 100;
+  const ring = `<svg class="ring" viewBox="0 0 112 112" aria-hidden="true"><circle cx="56" cy="56" r="${r}" fill="none" stroke="#2a3246" stroke-width="10"/>
+    <circle cx="56" cy="56" r="${r}" fill="none" stroke="${paused ? "#ffb547" : "#4a7df0"}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${c * f} ${c}" transform="rotate(-90 56 56)"/>
+    <text x="56" y="61" text-anchor="middle" font-size="17" font-weight="700">${paused ? "off" : d.blocked + "%"}</text></svg>`;
+  let action;
+  if (paused) action = `<button class="btn ghost" id="resume">Resume · ${Math.floor(paused / 60)}:${String(paused % 60).padStart(2, "0")}</button>`;
+  else if (confirmPause) action = `<div class="row2"><button class="btn ghost" id="cancel">Cancel</button><button class="btn" id="pause-yes">Pause</button></div>`;
+  else action = `<button class="btn" id="pause">Pause ads 10 min</button>`;
+  return `<div class="ads">${ring}<div><div class="big">${fmt(d.nBlocked)}</div><p>blocked of ${fmt(d.queries)} today</p>${action}</div></div>`;
+}
+function alerts(d) {
+  if (!d.problems.length) return `<div class="calm"><img alt="" src="${SPR.RUN0}"><div><h2>Nothing wrong</h2><p>Internet ${d.ms} ms · ${d.watts} W now</p><p>All services answered 20 s ago</p></div></div>`;
+  return `<div class="list">${d.problems.map(p => `<div class="alert">${p.t}<small>${p.s}</small></div>`).join("")}</div>`;
+}
+function render() {
+  const d = DATA[mode] || DATA.ok;
+  let body;
+  if (mode === "off") body = `<div class="offline"><img alt="Pringle sleeping" src="${SPR.SLEEP}"><h2>Can't reach the homelab</h2><p>WiFi is connected. The server isn't answering.</p><p>Trying again in 12 s</p></div>`;
+  else body = `<div class="page">${{ home, server, ads, alerts }[tab](d)}</div>${nav()}`;
+  screen.innerHTML = top() + body + (toast ? `<div class="toast">${toast}</div>` : "");
+  screen.classList.toggle("dim", mode === "off");
+  const ledC = mode === "off" ? "#8a93a6" : mode === "bad" ? "#ff5d6c" : paused ? "#ffb547" : "#4cd387";
+  led.style.background = ledC; led.style.boxShadow = `0 0 10px ${ledC}`;
+}
+function animate() {
+  clearInterval(timer);
+  if (reduce || mode === "off" || mode === "bad") return;
+  const cpu = (DATA[mode] || DATA.ok).cpu;
+  const iv = Math.max(60, 200 - cpu / 100 * 140) * 1.6;
+  timer = setInterval(() => { frame = (frame + 1) % 4; const p = document.getElementById("pet"); if (p) p.src = SPR["RUN" + frame]; }, iv);
+}
+function flash(msg) { toast = msg; render(); setTimeout(() => { toast = ""; render(); }, 1600); }
+
+screen.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.tab) { tab = b.dataset.tab; confirmPause = false; render(); return; }
+  if (b.id === "pause") { confirmPause = true; render(); }
+  if (b.id === "cancel") { confirmPause = false; render(); }
+  if (b.id === "pause-yes") { confirmPause = false; paused = 600; flash("Ads paused for 10 min"); }
+  if (b.id === "resume") { paused = 0; flash("Ad blocking is back on"); }
+});
+setInterval(() => { if (paused > 0) { paused--; if (tab === "ads" && mode !== "off") render(); if (!paused) render(); } }, 1000);
+
+document.getElementById("modes").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  mode = b.dataset.mode;
+  document.querySelectorAll("#modes button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  render(); animate();
+});
+
+function fit() { const w = document.getElementById("viewport").clientWidth; screen.style.transform = `scale(${w / 320})`; }
+new ResizeObserver(fit).observe(document.getElementById("viewport"));
+fit(); render(); animate();
+</script>
