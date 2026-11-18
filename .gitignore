@@ -1,3 +1,6 @@
 .pio/
 .vscode/
 include/secrets.h
+.DS_Store
+# built firmware contains the WiFi and dashboard passwords
+releases/
