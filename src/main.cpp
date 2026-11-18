@@ -19,7 +19,7 @@
 // Adds fake servers named "demo-1", "demo-2"... after the real ones, to preview the
 // Server tab with many machines. Set to 0 for normal use.
 #ifndef DEMO_SERVERS
-#define DEMO_SERVERS 5
+#define DEMO_SERVERS 0
 #endif
 
 // ---------- hardware
